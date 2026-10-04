@@ -28,6 +28,21 @@ jobs:
           "$SDKM" "platforms;android-34" "build-tools;34.0.0"
           echo "$SDK/build-tools/34.0.0" >> "$GITHUB_PATH"
 
+      - name: Generate launcher icons from SVG
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq librsvg2-bin
+          declare -A legacy=( [mdpi]=48 [hdpi]=72 [xhdpi]=96 [xxhdpi]=144 [xxxhdpi]=192 )
+          declare -A fg=( [mdpi]=108 [hdpi]=162 [xhdpi]=216 [xxhdpi]=324 [xxxhdpi]=432 )
+          for d in "${!legacy[@]}"; do
+            mkdir -p "res/mipmap-$d"
+            rsvg-convert -w "${legacy[$d]}" -h "${legacy[$d]}" icon/ic_launcher.svg -o "res/mipmap-$d/ic_launcher.png"
+            cp "res/mipmap-$d/ic_launcher.png" "res/mipmap-$d/ic_launcher_round.png"
+            rsvg-convert -w "${fg[$d]}" -h "${fg[$d]}" icon/ic_launcher_foreground.svg -o "res/mipmap-$d/ic_launcher_foreground.png"
+          done
+          find res -name '*.png' -printf '%p %k KB\n'
+
       - name: Build APK
         run: |
           set -euo pipefail
@@ -47,7 +62,7 @@ jobs:
 
           javac -source 17 -target 17 -encoding UTF-8 \
             -classpath "$AJ" -d build/classes \
-            src/com/octopus/capdetect/MainActivity.java
+            src/com/octopusassem/rootscope/MainActivity.java
 
           "$BT/d8" --lib "$AJ" --min-api 29 --output build/dex \
             $(find build/classes -name '*.class')
@@ -58,21 +73,21 @@ jobs:
           "$BT/zipalign" -f -p 4 build/base.apk build/aligned.apk
 
           keytool -genkeypair -keystore build/release.jks -storepass 123456 \
-            -keypass 123456 -alias ksu -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Capability Detector"
+            -keypass 123456 -alias rootscope -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=RootScope"
 
           "$BT/apksigner" sign \
             --ks build/release.jks --ks-pass pass:123456 \
-            --key-pass pass:123456 --ks-key-alias ksu \
+            --key-pass pass:123456 --ks-key-alias rootscope \
             --v1-signing-enabled true --v2-signing-enabled true \
-            --out CapabilityDetector.apk build/aligned.apk
+            --out RootScope.apk build/aligned.apk
 
-          "$BT/apksigner" verify --print-certs CapabilityDetector.apk
-          ls -l CapabilityDetector.apk
+          "$BT/apksigner" verify --print-certs RootScope.apk
+          ls -l RootScope.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: CapabilityDetector
-          path: CapabilityDetector.apk
+          name: RootScope
+          path: RootScope.apk
           if-no-files-found: error

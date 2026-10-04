@@ -1,4 +1,4 @@
-package com.octopus.capdetect;
+package com.octopusassem.rootscope;
 
 import android.app.Activity;
 import android.content.ClipData;
@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Kernel Inspector: reads everything the (Re)SukiSU manager can see -
+ * RootScope: reads everything the (Re)SukiSU manager can see -
  * features, modules (name/version/author/state/webui/action), SUSFS,
  * seccomp, umount lists, dynamic manager. If it cannot obtain root, it says so.
  */
@@ -90,7 +90,7 @@ public class MainActivity extends Activity {
         root.setPadding(dp(14), dp(14), dp(14), dp(8));
 
         TextView title = new TextView(this);
-        title.setText("KERNEL INSPECTOR");
+        title.setText("RootScope");
         title.setTextColor(C_TXT);
         title.setTextSize(22);
         title.setTypeface(Typeface.DEFAULT_BOLD);
