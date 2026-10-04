@@ -1,0 +1,72 @@
+name: build-apk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install platform and build-tools
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          AJ="$ANDROID_HOME/platforms/android-34/android.jar"
+          mkdir -p build/classes build/dex build/res
+
+          "$BT/aapt2" compile --dir res -o build/res.zip
+          "$BT/aapt2" link \
+            -o build/base.apk \
+            -I "$AJ" \
+            --manifest AndroidManifest.xml \
+            --min-sdk-version 29 \
+            --target-sdk-version 34 \
+            build/res.zip
+
+          javac -source 17 -target 17 -encoding UTF-8 \
+            -classpath "$AJ" -d build/classes \
+            src/com/octopus/capdetect/MainActivity.java
+
+          "$BT/d8" --lib "$AJ" --min-api 29 --output build/dex \
+            $(find build/classes -name '*.class')
+
+          cp build/dex/classes.dex build/classes.dex
+          (cd build && zip -q -X base.apk classes.dex)
+
+          "$BT/zipalign" -f -p 4 build/base.apk build/aligned.apk
+
+          keytool -genkeypair -keystore build/release.jks -storepass 123456 \
+            -keypass 123456 -alias ksu -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Capability Detector"
+
+          "$BT/apksigner" sign \
+            --ks build/release.jks --ks-pass pass:123456 \
+            --key-pass pass:123456 --ks-key-alias ksu \
+            --v1-signing-enabled true --v2-signing-enabled true \
+            --out CapabilityDetector.apk build/aligned.apk
+
+          "$BT/apksigner" verify --print-certs CapabilityDetector.apk
+          ls -l CapabilityDetector.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CapabilityDetector
+          path: CapabilityDetector.apk
+          if-no-files-found: error
