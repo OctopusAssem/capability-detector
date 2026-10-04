@@ -17,17 +17,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install platform and build-tools
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "SDK=$SDK"
+          SDKM="$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -1)"
+          echo "SDKM=$SDKM"
+          yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0"
+          echo "$SDK/build-tools/34.0.0" >> "$GITHUB_PATH"
 
       - name: Build APK
         run: |
           set -euo pipefail
-          BT="$ANDROID_HOME/build-tools/34.0.0"
-          AJ="$ANDROID_HOME/platforms/android-34/android.jar"
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          BT="$SDK/build-tools/34.0.0"
+          AJ="$SDK/platforms/android-34/android.jar"
           mkdir -p build/classes build/dex build/res
 
           "$BT/aapt2" compile --dir res -o build/res.zip
