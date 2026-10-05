@@ -23,66 +23,82 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * RootScope: reads everything the (Re)SukiSU manager can see -
- * features, modules (name/version/author/state/webui/action), SUSFS,
- * seccomp, umount lists, dynamic manager. If it cannot obtain root, it says so.
+ * Universal root and manager inspector.
+ *
+ * - Non-root mode: tries to detect root artifacts, known manager packages and common paths.
+ * - Root mode: reads KernelSU / ReSukiSU / Magisk / APatch related metadata when available.
  */
 public class MainActivity extends Activity {
 
-    private static final String K = "/data/adb/ksud";
     private static final String PROBE =
-        "K=" + K + "\n" +
-        "echo \"###DEVICE\"\n" +
+        "set +e\n" +
+        "echo '###DEVICE'\n" +
         "getprop ro.product.model\n" +
         "getprop ro.product.brand\n" +
         "getprop ro.build.version.release\n" +
         "getprop ro.build.version.sdk\n" +
-        "echo \"###ROOT\"\n" +
+        "getprop ro.build.fingerprint\n" +
+        "echo '###SELINUX'\n" +
+        "getenforce 2>/dev/null || cat /sys/fs/selinux/enforce 2>/dev/null || echo unknown\n" +
+        "echo '###ROOT'\n" +
         "id\n" +
-        "echo \"###INFO\"\n" +
-        "$K debug info\n" +
-        "echo \"###FEATURES\"\n" +
-        "$K feature list\n" +
-        "echo \"###SECCOMP\"\n" +
-        "cat /proc/sys/kernel/seccomp/actions_avail\n" +
-        "echo \"###SUSFS\"\n" +
-        "$K susfs show variant\n" +
-        "$K susfs show enabled_features\n" +
-        "echo \"###UMOUNT\"\n" +
-        "$K kernel umount list\n" +
-        "echo \"###UMOUNTCFG\"\n" +
-        "$K umount-config list\n" +
-        "echo \"###DYN\"\n" +
-        "$K kernel dynamic-manager get\n" +
-        "echo \"###MODULES\"\n" +
-        "$K module list\n" +
-        "echo \"###END\"\n";
+        "echo '###PATHS'\n" +
+        "ls -ld /system/bin/su /system/xbin/su /sbin/su /data/adb /data/adb/ksud /data/adb/magisk /data/adb/apd /data/adb/modules 2>/dev/null || true\n" +
+        "echo '###PKGS'\n" +
+        "pm list packages 2>/dev/null | grep -Ei 'magisk|kernelsu|resukisu|apatch|ksu|root' || true\n" +
+        "echo '###PROC'\n" +
+        "cat /proc/modules 2>/dev/null | grep -Ei 'ksu|susfs|apatch|magisk' || true\n" +
+        "echo '###INFO'\n" +
+        "if [ -x \"/data/adb/ksud\" ]; then /data/adb/ksud debug info 2>/dev/null || true; fi\n" +
+        "if [ -x \"/data/adb/magisk\" ]; then /data/adb/magisk --path 2>/dev/null || true; fi\n" +
+        "if [ -x \"/data/adb/apd\" ]; then /data/adb/apd --help 2>/dev/null | head -n 20 || true; fi\n" +
+        "echo '###FEATURES'\n" +
+        "if [ -x \"/data/adb/ksud\" ]; then /data/adb/ksud feature list 2>/dev/null || true; fi\n" +
+        "echo '###SECCOMP'\n" +
+        "cat /proc/sys/kernel/seccomp/actions_avail 2>/dev/null || true\n" +
+        "echo '###SUSFS'\n" +
+        "if [ -x \"/data/adb/ksud\" ]; then /data/adb/ksud susfs show variant 2>/dev/null || true; /data/adb/ksud susfs show enabled_features 2>/dev/null || true; fi\n" +
+        "echo '###UMOUNT'\n" +
+        "if [ -x \"/data/adb/ksud\" ]; then /data/adb/ksud kernel umount list 2>/dev/null || true; fi\n" +
+        "echo '###DYN'\n" +
+        "if [ -x \"/data/adb/ksud\" ]; then /data/adb/ksud kernel dynamic-manager get 2>/dev/null || true; fi\n" +
+        "echo '###MODULES'\n" +
+        "if [ -x \"/data/adb/ksud\" ]; then /data/adb/ksud module list 2>/dev/null || true; fi\n" +
+        "echo '###MAGISK'\n" +
+        "ls -ld /data/adb/magisk /data/adb/modules 2>/dev/null || true\n" +
+        "ls -l /data/adb/modules 2>/dev/null | head -n 50 || true\n" +
+        "echo '###APATCH'\n" +
+        "ls -ld /data/adb/apd /data/adb/modules/apatch 2>/dev/null || true\n" +
+        "echo '###END'\n";
 
     private TextView status;
     private LinearLayout content;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private String lastRaw = "";
 
-    private int C_BG = Color.parseColor("#0a0e13");
-    private int C_CARD = Color.parseColor("#141b23");
-    private int C_LINE = Color.parseColor("#28333f");
-    private int C_TXT = Color.parseColor("#e7eef6");
-    private int C_MUT = Color.parseColor("#93a4b8");
-    private int C_GRN = Color.parseColor("#34d399");
-    private int C_RED = Color.parseColor("#f87171");
-    private int C_AMB = Color.parseColor("#fbbf24");
-    private int C_BLUE = Color.parseColor("#60a5fa");
-    private int C_VIO = Color.parseColor("#a78bfa");
+    private static final int C_BG = Color.parseColor("#0a0e13");
+    private static final int C_CARD = Color.parseColor("#141b23");
+    private static final int C_LINE = Color.parseColor("#28333f");
+    private static final int C_TXT = Color.parseColor("#e7eef6");
+    private static final int C_MUT = Color.parseColor("#93a4b8");
+    private static final int C_GRN = Color.parseColor("#34d399");
+    private static final int C_RED = Color.parseColor("#f87171");
+    private static final int C_AMB = Color.parseColor("#fbbf24");
+    private static final int C_BLUE = Color.parseColor("#60a5fa");
+    private static final int C_VIO = Color.parseColor("#a78bfa");
 
     @Override
-    protected void onCreate(Bundle b) {
-        super.onCreate(b);
+    protected void onCreate(Bundle bundle) {
+        super.onCreate(bundle);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -90,14 +106,14 @@ public class MainActivity extends Activity {
         root.setPadding(dp(14), dp(14), dp(14), dp(8));
 
         TextView title = new TextView(this);
-        title.setText("RootScope");
+        title.setText("RootScope Universal");
         title.setTextColor(C_TXT);
         title.setTextSize(22);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
 
         status = new TextView(this);
-        status.setText("Requesting root... approve it in the manager if asked.");
+        status.setText("Running device and root detection...");
         status.setTextColor(C_MUT);
         status.setTextSize(12);
         status.setPadding(0, dp(2), 0, dp(10));
@@ -105,12 +121,15 @@ public class MainActivity extends Activity {
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
+
         Button refresh = new Button(this);
         refresh.setText("REFRESH");
         refresh.setAllCaps(false);
+
         Button copy = new Button(this);
         copy.setText("COPY REPORT");
         copy.setAllCaps(false);
+
         bar.addView(refresh, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         bar.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(bar);
@@ -124,15 +143,11 @@ public class MainActivity extends Activity {
 
         setContentView(root);
 
-        refresh.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) { runProbe(); }
-        });
-        copy.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                cm.setPrimaryClip(ClipData.newPlainText("report", lastRaw));
-                Toast.makeText(MainActivity.this, "Copied", Toast.LENGTH_SHORT).show();
-            }
+        refresh.setOnClickListener(v -> runProbe());
+        copy.setOnClickListener(v -> {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("report", lastRaw));
+            Toast.makeText(this, "Copied", Toast.LENGTH_SHORT).show();
         });
 
         runProbe();
@@ -140,35 +155,33 @@ public class MainActivity extends Activity {
 
     private void runProbe() {
         content.removeAllViews();
-        status.setText("Requesting root...");
-        new Thread(new Runnable() {
-            public void run() {
-                String raw;
-                try {
-                    raw = exec(new String[] { "su", "-c", PROBE }, 40000L);
-                } catch (Exception e) {
-                    raw = "###ROOT\nERROR " + e + "\n###END\n";
-                }
-                final String rawF = raw;
-                final Map<String, String> sec = parseSections(raw);
-                ui.post(new Runnable() {
-                    public void run() {
-                        lastRaw = rawF;
-                        renderAll(sec);
-                    }
-                });
+        status.setText("Running...");
+        new Thread(() -> {
+            String raw;
+            try {
+                raw = execShell(new String[] { "su", "-c", PROBE }, 50000L);
+            } catch (Exception e) {
+                raw = "###ROOT\nERROR " + e + "\n###END\n";
             }
+            final String rawF = raw;
+            final Map<String, String> sec = parseSections(rawF);
+            ui.post(() -> {
+                lastRaw = rawF;
+                renderAll(sec);
+            });
         }).start();
     }
 
-    private String exec(String[] cmd, long timeoutMs) throws Exception {
+    private String execShell(String[] cmd, long timeoutMs) throws Exception {
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(true);
         Process p = pb.start();
         StringBuilder sb = new StringBuilder();
         BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
         String line;
-        while ((line = r.readLine()) != null) sb.append(line).append('\n');
+        while ((line = r.readLine()) != null) {
+            sb.append(line).append('\n');
+        }
         if (!p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
             p.destroyForcibly();
             sb.append("[timeout]\n");
@@ -177,14 +190,17 @@ public class MainActivity extends Activity {
     }
 
     private Map<String, String> parseSections(String raw) {
-        Map<String, String> out = new LinkedHashMap<String, String>();
+        Map<String, String> out = new LinkedHashMap<>();
         String cur = null;
         StringBuilder buf = new StringBuilder();
         for (String line : raw.split("\n")) {
             if (line.startsWith("###")) {
                 if (cur != null) out.put(cur, buf.toString().trim());
                 String name = line.substring(3).trim();
-                if (name.equals("END")) { cur = null; break; }
+                if (name.equals("END")) {
+                    cur = null;
+                    break;
+                }
                 cur = name;
                 buf = new StringBuilder();
             } else if (cur != null) {
@@ -196,100 +212,108 @@ public class MainActivity extends Activity {
     }
 
     private void renderAll(Map<String, String> sec) {
-        String root = sec.get("ROOT");
-        boolean rooted = root != null && root.contains("uid=0");
-        status.setTextColor(rooted ? C_GRN : C_RED);
-        status.setText(rooted ? "ROOT ok  ·  uid=0  ·  " + firstLine(sec.get("DEVICE")) : "ROOT NOT DETECTED");
-        if (!rooted) {
-            addCard("ROOT STATUS",
-                t("ROOT: NOT DETECTED", C_RED, 15, true),
-                t("The app could not obtain root (uid=0), so it cannot read kernel capabilities. "
-                    + "Either there is no root solution, or the request was denied.", C_MUT, 12.5f, false),
-                mono(root == null ? "(no output)" : root));
-            return;
-        }
-        String info = sec.get("INFO");
-        String feats = sec.get("FEATURES");
-        String seccomp = sec.get("SECCOMP");
-        String susfs = sec.get("SUSFS");
-        String umount = sec.get("UMOUNT");
-        String umountcfg = sec.get("UMOUNTCFG");
-        String dyn = sec.get("DYN");
-        String modules = sec.get("MODULES");
-        Map<String, String> im = parseKv(info);
-        String[] dev = (sec.get("DEVICE") == null ? "" : sec.get("DEVICE")).split("\n");
+        String rootText = sec.get("ROOT");
+        boolean rooted = rootText != null && rootText.contains("uid=0");
+        String device = sec.get("DEVICE");
+        String firstDeviceLine = firstLine(device);
 
         LinearLayout srow = badgeRow();
-        addBadge(srow, badge("ROOT", C_GRN));
-        if (im.containsKey("runtime_mode")) addBadge(srow, badge(im.get("runtime_mode"), C_BLUE));
-        addBadge(srow, badge("uapi " + im.getOrDefault("uapi_version", "?"), C_VIO));
-        addBadge(srow, badge(countModules(modules) + " modules", C_AMB));
-        addBadge(srow, badge("seccomp", (seccomp != null && seccomp.contains("allow")) ? C_GRN : C_RED));
-        addBadge(srow, badge("susfs", (susfs != null && !susfs.trim().isEmpty()) ? C_GRN : C_MUT));
+        addBadge(srow, badge(rooted ? "ROOT OK" : "ROOT NOT FOUND", rooted ? C_GRN : C_RED));
+        addBadge(srow, badge("SELinux " + firstNonEmpty(sec.get("SELINUX"), "unknown"), rooted ? C_BLUE : C_MUT));
+        addBadge(srow, badge("Managers: " + countManagerRefs(sec), C_VIO));
         addCard("SUMMARY", srow,
-            kv("KSU version", im.getOrDefault("version", "?")),
-            kv("full version", im.getOrDefault("full_version", "?")),
-            kv("device", (dev.length > 0 ? dev[0] : "?") + "  ·  Android " + (dev.length > 2 ? dev[2] : "?")));
+            kv("Device", firstDeviceLine),
+            kv("Brand", secondLine(device)),
+            kv("Android", thirdLine(device)),
+            kv("Root", rooted ? "uid=0" : "not detected"));
 
-        renderFeatures(feats);
-        renderModules(modules);
-        renderInfo(im);
-        renderSeccomp(seccomp);
-        renderSusfs(susfs);
-        renderLists(umount, umountcfg, dyn);
-    }
-
-    private void renderFeatures(String feats) {
-        if (feats == null) return;
-        String[] lines = feats.split("\n");
-        LinearLayout c = card();
-        c.addView(t("FEATURES", C_BLUE, 13, true));
-        for (int i = 0; i < lines.length; i++) {
-            String ln = lines[i].trim();
-            if (!ln.startsWith("[")) continue;
-            int e = ln.indexOf(']');
-            if (e < 0) continue;
-            String stat = ln.substring(1, e);
-            String rest = ln.substring(e + 1).trim();
-            boolean managed = rest.contains("MODULE_MANAGED");
-            String name = rest, id = "";
-            int p = rest.indexOf("(ID=");
-            if (p >= 0) {
-                name = rest.substring(0, p).trim();
-                int q = rest.indexOf(')', p);
-                if (q > 0) id = rest.substring(p + 4, q);
-            }
-            int col = stat.startsWith("ENABLED") ? C_GRN : (stat.startsWith("DISABLED") ? C_MUT : C_RED);
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setPadding(0, dp(5), 0, dp(2));
-            TextView nn = t(name, C_TXT, 13, true);
-            nn.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.6f));
-            TextView ss = t(stat + (managed ? "  ·mod" : ""), col, 11.5f, true);
-            ss.setGravity(Gravity.END);
-            ss.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.4f));
-            row.addView(nn);
-            row.addView(ss);
-            c.addView(row);
-            if (i + 1 < lines.length) {
-                String d = lines[i + 1].trim();
-                if (!d.startsWith("[")) c.addView(t(d, C_MUT, 11, false));
-            }
+        if (!rooted) {
+            renderNonRootMode(sec);
+            return;
         }
-        content.addView(c);
+
+        renderRootMode(sec);
     }
 
-    private void renderModules(String json) {
+    private void renderNonRootMode(Map<String, String> sec) {
+        String paths = sec.get("PATHS");
+        String pkgs = sec.get("PKGS");
+        String selinux = sec.get("SELINUX");
+        String device = sec.get("DEVICE");
+
+        status.setTextColor(C_RED);
+        status.setText("No root detected. Looking for root artifacts and manager traces.");
+
+        addCard("NON-ROOT SIGNALS",
+            kv("SELinux", firstNonEmpty(selinux, "unknown")),
+            kv("su paths", firstNonEmpty(paths, "none")),
+            kv("Manager packages", firstNonEmpty(pkgs, "none")),
+            kv("Build fingerprint", firstNonEmpty(secondLine(device), "unknown")));
+
+        if (paths != null && !paths.isEmpty()) {
+            addCard("COMMON ROOT PATHS", mono(paths));
+        }
+
+        if (pkgs != null && !pkgs.isEmpty()) {
+            addCard("PACKAGE HINTS", mono(pkgs));
+        }
+
+        renderKnownRootArtifacts();
+    }
+
+    private void renderRootMode(Map<String, String> sec) {
+        status.setTextColor(C_GRN);
+        status.setText("Root detected. Reading kernel and manager metadata.");
+
+        addCard("ROOT MODE",
+            kv("uid", firstNonEmpty(sec.get("ROOT"), "unknown")),
+            kv("SELinux", firstNonEmpty(sec.get("SELINUX"), "unknown")),
+            kv("Manager hints", detectManagerHints(sec)));
+
+        String info = sec.get("INFO");
+        String feats = sec.get("FEATURES");
+        String susfs = sec.get("SUSFS");
+        String modules = sec.get("MODULES");
+        String magisk = sec.get("MAGISK");
+        String apatch = sec.get("APATCH");
+        String proc = sec.get("PROC");
+
+        if (info != null && !info.isEmpty()) {
+            addCard("KERNEL/ROOT INFO", mono(info));
+        }
+        if (feats != null && !feats.isEmpty()) {
+            addCard("FEATURES", mono(feats));
+        }
+        if (susfs != null && !susfs.isEmpty()) {
+            addCard("SUSFS", mono(susfs));
+        }
+        if (modules != null && !modules.isEmpty()) {
+            renderModuleList(modules);
+        }
+        if (proc != null && !proc.isEmpty()) {
+            addCard("PROC MODULES", mono(proc));
+        }
+        if (magisk != null && !magisk.isEmpty()) {
+            addCard("MAGISK ARTIFACTS", mono(magisk));
+        }
+        if (apatch != null && !apatch.isEmpty()) {
+            addCard("APATCH ARTIFACTS", mono(apatch));
+        }
+
+        renderKnownRootArtifacts();
+    }
+
+    private void renderModuleList(String modules) {
         LinearLayout c = card();
         c.addView(t("MODULES", C_BLUE, 13, true));
-        String s = json == null ? "" : json.trim();
+        String s = modules == null ? "" : modules.trim();
         if (s.isEmpty()) {
             c.addView(t("none", C_MUT, 12, false));
             content.addView(c);
             return;
         }
         if (!s.startsWith("[")) {
-            c.addView(t("could not read module list", C_RED, 12, false));
+            c.addView(t("could not parse module list", C_RED, 12, false));
             c.addView(mono(s));
             content.addView(c);
             return;
@@ -317,8 +341,7 @@ public class MainActivity extends Activity {
                 m.addView(t(o.optString("id", ""), C_MUT, 11, false));
                 String ver = o.optString("version", "");
                 String au = o.optString("author", "");
-                m.addView(t((ver.isEmpty() ? "" : "v" + ver) + (au.isEmpty() ? "" : "   ·   " + au),
-                    C_VIO, 11.5f, false));
+                m.addView(t((ver.isEmpty() ? "" : "v" + ver) + (au.isEmpty() ? "" : "   ·   " + au), C_VIO, 11.5f, false));
                 String desc = o.optString("description", "");
                 if (!desc.isEmpty()) m.addView(t(desc, C_MUT, 12, false));
 
@@ -331,9 +354,6 @@ public class MainActivity extends Activity {
                 if ("true".equals(o.optString("update"))) addBadge(br, badge("UPDATE", C_AMB));
                 if ("true".equals(o.optString("remove"))) addBadge(br, badge("REMOVE", C_RED));
                 m.addView(br);
-
-                String mf = o.optString("managedFeatures", "");
-                if (!mf.isEmpty()) m.addView(t("manages: " + mf, C_AMB, 11, false));
                 c.addView(m);
             }
         } catch (Exception e) {
@@ -343,153 +363,82 @@ public class MainActivity extends Activity {
         content.addView(c);
     }
 
-    private void renderInfo(Map<String, String> im) {
+    private void renderKnownRootArtifacts() {
+        List<String> paths = new ArrayList<>();
+        paths.add("/system/bin/su");
+        paths.add("/system/xbin/su");
+        paths.add("/sbin/su");
+        paths.add("/data/adb/magisk");
+        paths.add("/data/adb/ksud");
+        paths.add("/data/adb/apd");
+        paths.add("/data/adb/modules");
+        paths.add("/data/adb/modules/apatch");
+        paths.add("/data/adb/ksu");
+        paths.add("/data/adb/lkm");
+
         LinearLayout c = card();
-        c.addView(t("KERNEL INFO", C_BLUE, 13, true));
-        c.addView(kv("version", im.getOrDefault("version", "?")));
-        c.addView(kv("full version", im.getOrDefault("full_version", "?")));
-        c.addView(kv("uapi version", im.getOrDefault("uapi_version", "?")));
-        c.addView(kv("runtime mode", im.getOrDefault("runtime_mode", "?")));
-        c.addView(kv("lkm", im.getOrDefault("lkm", "?")));
-        c.addView(kv("bundled", im.getOrDefault("bundled", "?")));
-        c.addView(kv("late load", im.getOrDefault("late_load", "?")));
-        c.addView(kv("pr build", im.getOrDefault("pr_build", "?")));
-        c.addView(kv("features(max)", im.getOrDefault("features", "?") + "   (count, not a mask)"));
-        String fl = im.get("flags");
-        if (fl != null) {
-            int f = parseInt(fl.replace("0x", ""), 16);
-            StringBuilder sb = new StringBuilder();
-            if ((f & 1) != 0) sb.append("LKM ");
-            if ((f & 2) != 0) sb.append("MANAGER ");
-            if ((f & 4) != 0) sb.append("LATE_LOAD ");
-            if ((f & 8) != 0) sb.append("PR_BUILD ");
-            if ((f & 16) != 0) sb.append("BUNDLED ");
-            if (sb.length() == 0) sb.append("none set (from a root shell this is normal)");
-            c.addView(kv("flags decoded", fl + " -> " + sb.toString().trim()));
+        c.addView(t("ROOT ARTIFACT PATHS", C_BLUE, 13, true));
+        for (String p : paths) {
+            File f = new File(p);
+            boolean exists = f.exists();
+            c.addView(kv(p, exists ? "present" : "missing"));
         }
         content.addView(c);
     }
 
-    private void renderSeccomp(String seccomp) {
-        LinearLayout c = card();
-        c.addView(t("SECCOMP", C_BLUE, 13, true));
-        boolean ok = seccomp != null && seccomp.contains("allow");
-        c.addView(t(ok ? "filter fully supported" : "not available", ok ? C_GRN : C_RED, 12.5f, true));
-        if (seccomp != null) {
-            LinearLayout br = badgeRow();
-            for (String a : seccomp.trim().split("\\s+")) if (!a.isEmpty()) addBadge(br, badge(a, C_VIO));
-            c.addView(br);
+    private int countManagerRefs(Map<String, String> sec) {
+        int n = 0;
+        String[] keys = new String[] { "PKGS", "PATHS", "MAGISK", "APATCH", "INFO", "MODULES", "FEATURES" };
+        for (String k : keys) {
+            String v = sec.get(k);
+            if (v == null) continue;
+            String lower = v.toLowerCase();
+            if (lower.contains("magisk")) n++;
+            if (lower.contains("kernelsu") || lower.contains("ksu")) n++;
+            if (lower.contains("resukisu")) n++;
+            if (lower.contains("apatch")) n++;
         }
-        content.addView(c);
+        return Math.max(1, n);
     }
 
-    private void renderSusfs(String susfs) {
-        LinearLayout c = card();
-        c.addView(t("SUSFS", C_BLUE, 13, true));
-        if (susfs == null || susfs.trim().isEmpty()) {
-            c.addView(t("not present", C_MUT, 12, false));
-            content.addView(c);
-            return;
+    private String detectManagerHints(Map<String, String> sec) {
+        StringBuilder sb = new StringBuilder();
+        String[] sources = new String[] {
+            sec.get("PKGS"), sec.get("INFO"), sec.get("MODULES"), sec.get("MAGISK"), sec.get("APATCH"), sec.get("FEATURES")
+        };
+        for (String s : sources) {
+            if (s == null) continue;
+            String lower = s.toLowerCase();
+            if (lower.contains("magisk")) sb.append("Magisk ");
+            if (lower.contains("kernelsu") || lower.contains("ksu")) sb.append("KernelSU ");
+            if (lower.contains("resukisu")) sb.append("ReSukiSU ");
+            if (lower.contains("apatch")) sb.append("APatch ");
+            if (lower.contains("susfs")) sb.append("SUSFS ");
         }
-        String[] lines = susfs.trim().split("\n");
-        c.addView(kv("variant", lines[0].trim()));
-        LinearLayout br = badgeRow();
-        for (int i = 1; i < lines.length; i++) {
-            String f = lines[i].trim();
-            if (f.isEmpty()) continue;
-            String shortName = f.replace("CONFIG_KSU_SUSFS_", "");
-            addBadge(br, badge(shortName, C_GRN));
-        }
-        c.addView(br);
-        content.addView(c);
-    }
-
-    private void renderLists(String umount, String umountcfg, String dyn) {
-        LinearLayout c = card();
-        c.addView(t("KERNEL LISTS", C_BLUE, 13, true));
-        c.addView(t("umount list", C_MUT, 11.5f, true));
-        c.addView(mono(blank(umount)));
-        c.addView(t("auto-umount config", C_MUT, 11.5f, true));
-        c.addView(mono(blank(umountcfg)));
-        c.addView(t("dynamic manager", C_MUT, 11.5f, true));
-        c.addView(mono(blank(dyn)));
-        content.addView(c);
-    }
-
-    private String blank(String s) {
-        return (s == null || s.trim().isEmpty()) ? "(empty)" : s.trim();
-    }
-
-    private int countModules(String json) {
-        if (json == null) return 0;
-        try {
-            String s = json.trim();
-            if (!s.startsWith("[")) return 0;
-            return new JSONArray(s).length();
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
-    private Map<String, String> parseKv(String s) {
-        Map<String, String> m = new LinkedHashMap<String, String>();
-        if (s == null) return m;
-        for (String line : s.split("\n")) {
-            int i = line.indexOf(':');
-            if (i > 0) m.put(line.substring(0, i).trim(), line.substring(i + 1).trim());
-        }
-        return m;
+        return sb.length() == 0 ? "none detected" : sb.toString().trim();
     }
 
     private String firstLine(String s) {
-        if (s == null) return "";
-        int i = s.indexOf('\n');
-        return (i < 0 ? s : s.substring(0, i)).trim();
+        if (s == null || s.trim().isEmpty()) return "unknown";
+        String[] parts = s.split("\n");
+        return parts[0].trim();
     }
 
-    private int parseInt(String s, int radix) {
-        try { return Integer.parseInt(s.trim(), radix); } catch (Exception e) { return 0; }
+    private String secondLine(String s) {
+        if (s == null || s.trim().isEmpty()) return "unknown";
+        String[] parts = s.split("\n");
+        return parts.length > 1 ? parts[1].trim() : "unknown";
     }
 
-    private void addCard(String title, View... items) {
-        LinearLayout c = card();
-        if (title != null) {
-            TextView h = t(title, C_BLUE, 12.5f, true);
-            h.setPadding(0, 0, 0, dp(6));
-            c.addView(h);
-        }
-        for (View v : items) c.addView(v);
-        content.addView(c);
+    private String thirdLine(String s) {
+        if (s == null || s.trim().isEmpty()) return "unknown";
+        String[] parts = s.split("\n");
+        return parts.length > 2 ? parts[2].trim() : "unknown";
     }
 
-    private LinearLayout card() {
-        LinearLayout c = new LinearLayout(this);
-        c.setOrientation(LinearLayout.VERTICAL);
-        GradientDrawable g = new GradientDrawable();
-        g.setCornerRadius(dp(12));
-        g.setColor(C_CARD);
-        g.setStroke(dp(1), C_LINE);
-        c.setBackground(g);
-        c.setPadding(dp(12), dp(12), dp(12), dp(12));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(0, 0, 0, dp(10));
-        c.setLayoutParams(lp);
-        return c;
-    }
-
-    private LinearLayout kv(String k, String v) {
-        LinearLayout r = new LinearLayout(this);
-        r.setOrientation(LinearLayout.HORIZONTAL);
-        r.setPadding(0, dp(3), 0, dp(3));
-        TextView kk = t(k, C_MUT, 12, false);
-        kk.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.42f));
-        TextView vv = t(v, C_TXT, 12, false);
-        vv.setTypeface(Typeface.MONOSPACE);
-        vv.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.58f));
-        r.addView(kk);
-        r.addView(vv);
-        return r;
+    private String firstNonEmpty(String a, String fallback) {
+        if (a == null || a.trim().isEmpty()) return fallback;
+        return a.trim();
     }
 
     private LinearLayout badgeRow() {
@@ -518,8 +467,45 @@ public class MainActivity extends Activity {
         return v;
     }
 
-    private int alpha(int color, int a) {
-        return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color));
+    private LinearLayout card() {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(12));
+        g.setColor(C_CARD);
+        g.setStroke(dp(1), C_LINE);
+        c.setBackground(g);
+        c.setPadding(dp(12), dp(12), dp(12), dp(12));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 0, 0, dp(10));
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    private void addCard(String title, View... items) {
+        LinearLayout c = card();
+        if (title != null) {
+            TextView h = t(title, C_BLUE, 12.5f, true);
+            h.setPadding(0, 0, 0, dp(6));
+            c.addView(h);
+        }
+        for (View v : items) c.addView(v);
+        content.addView(c);
+    }
+
+    private LinearLayout kv(String k, String v) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setPadding(0, dp(3), 0, dp(3));
+        TextView kk = t(k, C_MUT, 12, false);
+        kk.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.42f));
+        TextView vv = t(v, C_TXT, 12, false);
+        vv.setTypeface(Typeface.MONOSPACE);
+        vv.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.58f));
+        r.addView(kk);
+        r.addView(vv);
+        return r;
     }
 
     private TextView t(String s, int color, float size, boolean bold) {
@@ -537,6 +523,10 @@ public class MainActivity extends Activity {
         v.setTypeface(Typeface.MONOSPACE);
         v.setTextIsSelectable(true);
         return v;
+    }
+
+    private int alpha(int color, int a) {
+        return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color));
     }
 
     private int dp(int x) {
